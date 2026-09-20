@@ -7,12 +7,18 @@ import cv2
 import numpy as np
 from pathlib import Path
 import sys
+from collections import Counter
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
 
 try:
     from ultralytics import YOLO
 except ImportError:
     print("ERROR: Silahkan install ultralytics terlebih dahulu")
-    print("Jalankan: pip install ultralytics opencv-python")
+    print("Jalankan: pip install ultralytics opencv-python matplotlib")
     sys.exit(1)
 
 
@@ -45,6 +51,77 @@ class VehicleIdentifier:
         
         self.confidence_threshold = 0.5
     
+    @staticmethod
+    def show_statistics_chart(vehicles_data, title_suffix=""):
+        """
+        Menampilkan diagram batang jenis kendaraan & pie chart warna menggunakan Matplotlib
+        
+        Args:
+            vehicles_data: List of dicts berisi info kendaraan [{'type': ..., 'color': ...}, ...]
+            title_suffix: String tambahan untuk judul grafik
+        """
+        if plt is None:
+            print("\n✗ Library 'matplotlib' belum terpasang. Jalankan: pip install matplotlib")
+            return
+            
+        if not vehicles_data:
+            print("\nℹ Tidak ada kendaraan terdeteksi untuk dibuatkan grafik statistik.")
+            return
+        
+        all_types = [v['type'] for v in vehicles_data if 'type' in v]
+        all_colors = [v['color'] for v in vehicles_data if 'color' in v]
+        
+        if not all_types:
+            print("\nℹ Tidak ada data kendaraan terdeteksi.")
+            return
+
+        type_counts = Counter(all_types)
+        color_counts = Counter(all_colors)
+
+        # Buat figure dengan 2 subplot (1 baris, 2 kolom)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        window_title = f"Statistik Deteksi Kendaraan {title_suffix}".strip()
+        fig.canvas.manager.set_window_title(window_title)
+        fig.suptitle(window_title, fontsize=14, fontweight='bold')
+
+        # Subplot 1: Bar Chart (Jenis Kendaraan)
+        types = list(type_counts.keys())
+        counts = list(type_counts.values())
+        bars = ax1.bar(types, counts, color='#4C72B0', edgecolor='black')
+        ax1.set_title('Jumlah per Jenis Kendaraan', fontsize=12)
+        ax1.set_xlabel('Jenis Kendaraan')
+        ax1.set_ylabel('Jumlah Kendaraan')
+        ax1.grid(axis='y', linestyle='--', alpha=0.7)
+        ax1.yaxis.get_major_locator().set_params(integer=True)
+        
+        # Angka di atas bar
+        for bar in bars:
+            height = bar.get_height()
+            ax1.annotate(f'{height}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontweight='bold')
+
+        # Subplot 2: Pie Chart (Warna Kendaraan)
+        colors_labels = list(color_counts.keys())
+        colors_values = list(color_counts.values())
+        
+        color_map = {
+            "Merah": "#E15759", "Kuning": "#EDC948", "Hijau": "#59A14F",
+            "Biru": "#4E79A7", "Oranye": "#F28E2B", "Hitam": "#404040",
+            "Putih": "#E0E0E0", "Abu-abu": "#BAB0AC", "Tidak diketahui": "#76B7B2"
+        }
+        pie_colors = [color_map.get(c, "#A0A0A0") for c in colors_labels]
+        
+        ax2.pie(colors_values, labels=colors_labels, colors=pie_colors, autopct='%1.1f%%', startangle=140)
+        ax2.set_title('Persentase Warna Kendaraan', fontsize=12)
+
+        print("\n>>> Menampilkan grafik statistik Matplotlib...")
+        print(">>> Petunjuk: Tutup jendela grafik untuk kembali ke menu utama.\n")
+        plt.tight_layout()
+        plt.show()
+
     @staticmethod
     def detect_color(crop_img):
         """
@@ -275,6 +352,8 @@ class VehicleIdentifier:
         print("✓ Kamera berhasil dibuka!")
         print(">>> Petunjuk: Tekan tombol 'q' atau 'ESC' pada jendela kamera untuk keluar.\n")
         
+        session_vehicles = []
+        
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -299,6 +378,12 @@ class VehicleIdentifier:
                         crop_img = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
                         vehicle_color = self.detect_color(crop_img)
                         
+                        session_vehicles.append({
+                            'type': vehicle_type,
+                            'color': vehicle_color,
+                            'confidence': round(confidence * 100, 2)
+                        })
+                        
                         # Gambar bounding box dan label (Jenis - Warna)
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         label = f"{vehicle_type} ({vehicle_color}) - {confidence*100:.1f}%"
@@ -321,6 +406,10 @@ class VehicleIdentifier:
         
         cap.release()
         cv2.destroyAllWindows()
+        
+        # Tampilkan grafik statistik dari sesi kamera real-time setelah kamera ditutup
+        if session_vehicles:
+            self.show_statistics_chart(session_vehicles, title_suffix="(Sesi Kamera Real-time)")
     
     @staticmethod
     def _print_result(result):
@@ -364,6 +453,8 @@ def main():
                 print("HASIL IDENTIFIKASI")
                 print("="*60)
                 identifier._print_result(result)
+                if result['vehicles']:
+                    identifier.show_statistics_chart(result['vehicles'], title_suffix="(Gambar Tunggal)")
         
         elif choice == '2':
             image_path = input("Masukkan path gambar: ").strip()
@@ -383,6 +474,8 @@ def main():
                     color_info = f", Warna: {vehicle['color']}" if 'color' in vehicle else ""
                     print(f"  {idx}. {vehicle['type']}{color_info} "
                           f"(Confidence: {vehicle['confidence']}%)")
+                if result['vehicles']:
+                    identifier.show_statistics_chart(result['vehicles'], title_suffix="(Gambar Tunggal)")
         
         elif choice == '3':
             directory_path = input("Masukkan path direktori: ").strip()
@@ -395,6 +488,14 @@ def main():
                 total_vehicles = sum(r['total_vehicles'] for r in results)
                 print(f"Total gambar diproses: {len(results)}")
                 print(f"Total kendaraan ditemukan: {total_vehicles}")
+                
+                # Kumpulkan semua kendaraan dari seluruh gambar di direktori
+                all_dir_vehicles = []
+                for res in results:
+                    all_dir_vehicles.extend(res.get('vehicles', []))
+                
+                if all_dir_vehicles:
+                    identifier.show_statistics_chart(all_dir_vehicles, title_suffix="(Direktori)")
         
         elif choice == '4':
             identifier.identify_realtime()
@@ -409,5 +510,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
