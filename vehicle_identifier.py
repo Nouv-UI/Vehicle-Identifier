@@ -45,9 +45,65 @@ class VehicleIdentifier:
         
         self.confidence_threshold = 0.5
     
+    @staticmethod
+    def detect_color(crop_img):
+        """
+        Deteksi warna dominan pada area crop kendaraan menggunakan ruang warna HSV
+        
+        Args:
+            crop_img: Image patch (Numpy array BGR) dari area kendaraan
+            
+        Returns:
+            String nama warna (Merah, Kuning, Hijau, Biru, Oranye, Hitam, Putih, Abu-abu/Perak, atau Tidak diketahui)
+        """
+        if crop_img is None or crop_img.size == 0:
+            return "Tidak diketahui"
+        
+        # Ambil area tengah saja (50% tengah) untuk meminimalkan pengaruh ban, kaca, dan latar belakang
+        h, w, _ = crop_img.shape
+        start_h, end_h = int(h * 0.25), int(h * 0.75)
+        start_w, end_w = int(w * 0.25), int(w * 0.75)
+        
+        if end_h > start_h and end_w > start_w:
+            center_crop = crop_img[start_h:end_h, start_w:end_w]
+        else:
+            center_crop = crop_img
+
+        hsv = cv2.cvtColor(center_crop, cv2.COLOR_BGR2HSV)
+        
+        # Range warna HSV
+        color_ranges = {
+            "Merah": [
+                (np.array([0, 70, 50]), np.array([10, 255, 255])),
+                (np.array([170, 70, 50]), np.array([180, 255, 255]))
+            ],
+            "Kuning": [(np.array([15, 70, 50]), np.array([35, 255, 255]))],
+            "Hijau": [(np.array([36, 50, 50]), np.array([85, 255, 255]))],
+            "Biru": [(np.array([90, 50, 50]), np.array([130, 255, 255]))],
+            "Oranye": [(np.array([11, 70, 50]), np.array([24, 255, 255]))],
+            "Hitam": [(np.array([0, 0, 0]), np.array([180, 255, 50]))],
+            "Putih": [(np.array([0, 0, 200]), np.array([180, 30, 255]))],
+            "Abu-abu": [(np.array([0, 0, 50]), np.array([180, 50, 199]))],
+        }
+        
+        max_pixels = 0
+        detected_color = "Tidak diketahui"
+        
+        for color_name, ranges in color_ranges.items():
+            mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+            for (lower, upper) in ranges:
+                mask |= cv2.inRange(hsv, lower, upper)
+            
+            pixel_count = cv2.countNonZero(mask)
+            if pixel_count > max_pixels:
+                max_pixels = pixel_count
+                detected_color = color_name
+                
+        return detected_color
+
     def identify_vehicle(self, image_path):
         """
-        Identifikasi jenis kendaraan dari gambar
+        Identifikasi jenis dan warna kendaraan dari gambar
         
         Args:
             image_path: Path ke file gambar
@@ -84,8 +140,13 @@ class VehicleIdentifier:
                     # Ambil koordinat bounding box
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     
+                    # Crop area kendaraan untuk analisis warna
+                    crop_img = image[max(0, y1):min(image.shape[0], y2), max(0, x1):min(image.shape[1], x2)]
+                    vehicle_color = self.detect_color(crop_img)
+                    
                     vehicles_found.append({
                         'type': vehicle_type,
+                        'color': vehicle_color,
                         'confidence': round(confidence * 100, 2),
                         'coordinates': {
                             'x1': x1,
@@ -105,7 +166,7 @@ class VehicleIdentifier:
     
     def identify_and_visualize(self, image_path, output_path=None):
         """
-        Identifikasi kendaraan dan gambar hasil dengan bounding box
+        Identifikasi kendaraan (jenis & warna) dan gambar hasil dengan bounding box
         
         Args:
             image_path: Path ke file gambar input
@@ -120,8 +181,8 @@ class VehicleIdentifier:
         # Jalankan deteksi
         results = self.model(image, conf=self.confidence_threshold)
         
-        # Gambar hasil deteksi
-        annotated_image = results[0].plot()
+        # Salin gambar untuk visualisasi custom
+        annotated_image = image.copy()
         
         vehicles_found = []
         
@@ -134,19 +195,24 @@ class VehicleIdentifier:
                     vehicle_type = self.VEHICLE_CLASSES[class_id]
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     
-                    # Gambar custom bounding box dan label
+                    # Crop area kendaraan untuk deteksi warna
+                    crop_img = image[max(0, y1):min(image.shape[0], y2), max(0, x1):min(image.shape[1], x2)]
+                    vehicle_color = self.detect_color(crop_img)
+                    
+                    # Gambar custom bounding box dan label (Jenis - Warna)
                     cv2.rectangle(annotated_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    label = f"{vehicle_type} ({confidence*100:.1f}%)"
-                    cv2.putText(annotated_image, label, (x1, y1-10),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    label = f"{vehicle_type} ({vehicle_color}) - {confidence*100:.1f}%"
+                    cv2.putText(annotated_image, label, (x1, max(y1-10, 20)),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                     
                     vehicles_found.append({
                         'type': vehicle_type,
+                        'color': vehicle_color,
                         'confidence': round(confidence * 100, 2)
                     })
         
         # Tampilkan gambar
-        cv2.imshow('Vehicle Detection', annotated_image)
+        cv2.imshow('Vehicle Identification & Color Detection', annotated_image)
         print("\nTekan tombol apapun untuk menutup gambar...")
         cv2.waitKey(0)
         cv2.destroyAllWindows()
@@ -194,7 +260,7 @@ class VehicleIdentifier:
     
     def identify_realtime(self, camera_index=0):
         """
-        Identifikasi jenis kendaraan secara real-time menggunakan kamera/webcam
+        Identifikasi jenis dan warna kendaraan secara real-time menggunakan kamera/webcam
         
         Args:
             camera_index: Indeks kamera (default: 0 untuk kamera bawaan laptop)
@@ -229,9 +295,13 @@ class VehicleIdentifier:
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
                         vehicle_count += 1
                         
-                        # Gambar bounding box dan label
+                        # Crop area kendaraan untuk deteksi warna real-time
+                        crop_img = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
+                        vehicle_color = self.detect_color(crop_img)
+                        
+                        # Gambar bounding box dan label (Jenis - Warna)
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        label = f"{vehicle_type} ({confidence*100:.1f}%)"
+                        label = f"{vehicle_type} ({vehicle_color}) - {confidence*100:.1f}%"
                         cv2.putText(frame, label, (x1, max(y1-10, 20)),
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             
@@ -241,7 +311,7 @@ class VehicleIdentifier:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             # Tampilkan frame di jendela OpenCV
-            cv2.imshow('Real-time Vehicle Identification', frame)
+            cv2.imshow('Real-time Vehicle & Color Identification', frame)
             
             # Cek tombol tekan ('q' atau ESC (27))
             key = cv2.waitKey(1) & 0xFF
@@ -259,7 +329,8 @@ class VehicleIdentifier:
         
         if result['vehicles']:
             for idx, vehicle in enumerate(result['vehicles'], 1):
-                print(f"    {idx}. {vehicle['type']} "
+                color_info = f", Warna: {vehicle['color']}" if 'color' in vehicle else ""
+                print(f"    {idx}. {vehicle['type']}{color_info} "
                       f"(Confidence: {vehicle['confidence']}%)")
         print()
 
@@ -271,7 +342,7 @@ def main():
     identifier = VehicleIdentifier(model_name='yolov8n.pt')
     
     print("\n" + "="*60)
-    print("PROGRAM IDENTIFIKASI JENIS KENDARAAN")
+    print("PROGRAM IDENTIFIKASI JENIS & WARNA KENDARAAN")
     print("="*60)
     
     while True:
@@ -309,7 +380,8 @@ def main():
                 print("="*60)
                 print(f"Total kendaraan ditemukan: {result['total_vehicles']}")
                 for idx, vehicle in enumerate(result['vehicles'], 1):
-                    print(f"  {idx}. {vehicle['type']} "
+                    color_info = f", Warna: {vehicle['color']}" if 'color' in vehicle else ""
+                    print(f"  {idx}. {vehicle['type']}{color_info} "
                           f"(Confidence: {vehicle['confidence']}%)")
         
         elif choice == '3':
@@ -337,4 +409,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
