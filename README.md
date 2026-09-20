@@ -2,6 +2,8 @@
 
 Program Python untuk mengidentifikasi dan mendeteksi berbagai jenis kendaraan serta warna dominan dari gambar/foto maupun kamera real-time menggunakan teknologi YOLOv8 (deep learning), OpenCV, dan Matplotlib.
 
+<img width="1920" height="1080" alt="Screenshot (461)" src="https://github.com/user-attachments/assets/621039be-cb9b-41d5-b2e5-385573519dcc" />
+
 ## 📋 Daftar Isi
 - [Fitur](#fitur)
 - [Persyaratan](#persyaratan)
